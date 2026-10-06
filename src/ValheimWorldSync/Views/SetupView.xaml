@@ -1,0 +1,211 @@
+<UserControl x:Class="ValheimWorldSync.Views.SetupView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <ScrollViewer x:Name="Scroller" VerticalScrollBarVisibility="Auto" Padding="36,28,36,12">
+            <Grid>
+
+                <!-- 0: Welcome -->
+                <StackPanel x:Name="StepWelcome">
+                    <TextBlock Style="{StaticResource TitleText}" Text="Welcome to Valheim World Sync" />
+                    <TextBlock Style="{StaticResource MutedText}" Margin="0,8,0,20"
+                               Text="Play one Valheim world together, whoever of you is online. The world is kept in a shared Google Drive folder." />
+
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource HeadingText}" Text="How it works" Margin="0,0,0,10" />
+                            <TextBlock Style="{StaticResource BodyText}" Margin="0,0,0,8"
+                                       Text="1.  Always start Valheim with the Play button in this app." />
+                            <TextBlock Style="{StaticResource BodyText}" Margin="0,0,0,8"
+                                       Text="2.  If a friend is already hosting, the app tells you and starts Valheim so you can join them." />
+                            <TextBlock Style="{StaticResource BodyText}" Margin="0,0,0,8"
+                                       Text="3.  If nobody is hosting, the app downloads the newest version of the world, starts Valheim, and you host." />
+                            <TextBlock Style="{StaticResource BodyText}"
+                                       Text="4.  When you close Valheim, the app uploads the world back to Google Drive automatically." />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource Card}" Margin="0,12,0,0">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource HeadingText}" Text="What you need" Margin="0,0,0,10" />
+                            <TextBlock Style="{StaticResource BodyText}" Text="•  Steam with Valheim installed" />
+                            <TextBlock Style="{StaticResource BodyText}" Text="•  A Google account and Google Drive for Desktop (free)" />
+                            <TextBlock Style="{StaticResource BodyText}" Text="•  A Google Drive folder that the whole group can edit — this setup explains how" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+                <!-- 1: Requirements -->
+                <StackPanel x:Name="StepRequirements" Visibility="Collapsed">
+                    <TextBlock Style="{StaticResource TitleText}" Text="Check your PC" />
+                    <TextBlock Style="{StaticResource MutedText}" Margin="0,8,0,20"
+                               Text="Everything below needs a green check. Install what's missing, then click Check again." />
+                    <StackPanel x:Name="RequirementList" />
+                    <Button x:Name="RecheckButton" Content="Check again" HorizontalAlignment="Left" Margin="0,16,0,0"
+                            Padding="16,6" Click="Recheck_Click" />
+                </StackPanel>
+
+                <!-- 2: Role -->
+                <StackPanel x:Name="StepRole" Visibility="Collapsed">
+                    <TextBlock Style="{StaticResource TitleText}" Text="Start or join?" />
+                    <TextBlock Style="{StaticResource MutedText}" Margin="0,8,0,20"
+                               Text="One person in the group sets up the shared world. Everyone else joins it." />
+
+                    <RadioButton x:Name="RoleCreate" GroupName="Role" Margin="0,0,0,12" Checked="Role_Checked">
+                        <StackPanel Margin="4,0,0,0">
+                            <TextBlock Style="{StaticResource HeadingText}" FontSize="16" Text="Share one of my worlds" />
+                            <TextBlock Style="{StaticResource MutedText}"
+                                       Text="You're the first one setting this up. You pick a world on this PC and the app puts it in a Google Drive folder you share with your friends." />
+                        </StackPanel>
+                    </RadioButton>
+                    <RadioButton x:Name="RoleJoin" GroupName="Role" Checked="Role_Checked">
+                        <StackPanel Margin="4,0,0,0">
+                            <TextBlock Style="{StaticResource HeadingText}" FontSize="16" Text="Join a world a friend shared" />
+                            <TextBlock Style="{StaticResource MutedText}"
+                                       Text="A friend already set this up and shared a Google Drive folder with you." />
+                        </StackPanel>
+                    </RadioButton>
+                </StackPanel>
+
+                <!-- 3: Shared folder -->
+                <StackPanel x:Name="StepFolder" Visibility="Collapsed">
+                    <TextBlock Style="{StaticResource TitleText}" Text="The shared Google Drive folder" />
+
+                    <Border Style="{StaticResource Card}" Margin="0,16,0,0">
+                        <StackPanel>
+                            <StackPanel x:Name="FolderCreateHelp">
+                                <TextBlock Style="{StaticResource BodyText}" Margin="0,0,0,8">
+                                    <Run FontWeight="SemiBold" Text="1." />
+                                    <Run Text=" Open Google Drive in your browser and create a new folder, e.g. " /><Run FontWeight="SemiBold" Text="Valheim World" /><Run Text="." />
+                                </TextBlock>
+                                <TextBlock Style="{StaticResource BodyText}" Margin="0,0,0,8">
+                                    <Run FontWeight="SemiBold" Text="2." />
+                                    <Run Text=" Right-click the folder → Share → add your friends' Google accounts and give them the" /> <Run FontWeight="SemiBold" Text="Editor" /> <Run Text="role." />
+                                </TextBlock>
+                                <TextBlock Style="{StaticResource BodyText}" Margin="0,0,0,12">
+                                    <Run FontWeight="SemiBold" Text="3." />
+                                    <Run Text=" Wait until the folder shows up in Google Drive on this PC (for example G:\My Drive\Valheim World) and select it below." />
+                                </TextBlock>
+                                <Button Content="Open Google Drive" HorizontalAlignment="Left" Padding="16,6"
+                                        Tag="https://drive.google.com/drive/my-drive" Click="OpenLink_Click" />
+                            </StackPanel>
+
+                            <StackPanel x:Name="FolderJoinHelp">
+                                <TextBlock Style="{StaticResource BodyText}" Margin="0,0,0,8">
+                                    <Run FontWeight="SemiBold" Text="1." />
+                                    <Run Text=" Open the folder your friend shared with you (from their email, or under " /><Run FontWeight="SemiBold" Text="Shared with me" /><Run Text=" in Google Drive)." />
+                                </TextBlock>
+                                <TextBlock Style="{StaticResource BodyText}" Margin="0,0,0,8">
+                                    <Run FontWeight="SemiBold" Text="2." />
+                                    <Run Text=" Right-click the folder → " /><Run FontWeight="SemiBold" Text="Organize → Add shortcut" /><Run Text=" → choose " /><Run FontWeight="SemiBold" Text="My Drive" /><Run Text=". Without this step the folder doesn't show up on your PC." />
+                                </TextBlock>
+                                <TextBlock Style="{StaticResource BodyText}" Margin="0,0,0,12">
+                                    <Run FontWeight="SemiBold" Text="3." />
+                                    <Run Text=" Wait until it appears in Google Drive on this PC (for example G:\My Drive\Valheim World) and select it below." />
+                                </TextBlock>
+                                <Button Content="Open 'Shared with me'" HorizontalAlignment="Left" Padding="16,6"
+                                        Tag="https://drive.google.com/drive/shared-with-me" Click="OpenLink_Click" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Style="{StaticResource BodyText}" FontWeight="SemiBold" Text="Shared folder on this PC" Margin="0,20,0,6" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="FolderBox" VerticalContentAlignment="Center" TextChanged="FolderBox_TextChanged" />
+                        <Button Grid.Column="1" Content="Browse…" Margin="8,0,0,0" Padding="16,6" Click="Browse_Click" />
+                    </Grid>
+                    <TextBlock x:Name="FolderMessage" Style="{StaticResource BodyText}" Margin="0,10,0,0" />
+                </StackPanel>
+
+                <!-- 4: World -->
+                <StackPanel x:Name="StepWorld" Visibility="Collapsed">
+                    <TextBlock Style="{StaticResource TitleText}" Text="The world" />
+
+                    <StackPanel x:Name="WorldCreatePanel">
+                        <TextBlock Style="{StaticResource MutedText}" Margin="0,8,0,16"
+                                   Text="Pick the world your group will play on. Worlds stored in Steam Cloud are copied to this PC's local saves — that's needed for syncing through Google Drive." />
+                        <ListBox x:Name="WorldList" MinHeight="120" MaxHeight="300" SelectionChanged="WorldList_SelectionChanged">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Margin="4,6">
+                                        <TextBlock FontSize="15" FontWeight="SemiBold" Text="{Binding Name}" />
+                                        <TextBlock Style="{StaticResource MutedText}" FontSize="12" Text="{Binding Details}" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                            <Button Content="Refresh" Padding="16,6" Click="RefreshWorlds_Click" />
+                            <TextBlock x:Name="NoWorldsText" Style="{StaticResource MutedText}" VerticalAlignment="Center" Margin="12,0,0,0"
+                                       Text="No worlds found. Create one in Valheim first (Start Game → New World), quit the game, then click Refresh." />
+                        </StackPanel>
+                    </StackPanel>
+
+                    <Border x:Name="WorldJoinPanel" Style="{StaticResource Card}" Margin="0,16,0,0">
+                        <TextBlock x:Name="WorldJoinText" Style="{StaticResource BodyText}" />
+                    </Border>
+
+                    <TextBlock x:Name="WorldWarning" Style="{StaticResource BodyText}" Margin="0,12,0,0"
+                               Foreground="{DynamicResource SystemFillColorCautionBrush}" />
+                </StackPanel>
+
+                <!-- 5: Name -->
+                <StackPanel x:Name="StepName" Visibility="Collapsed">
+                    <TextBlock Style="{StaticResource TitleText}" Text="Your name" />
+                    <TextBlock Style="{StaticResource MutedText}" Margin="0,8,0,16"
+                               Text="Your friends see this name when you're hosting, and next to every version you upload." />
+                    <TextBox x:Name="NameBox" MaxLength="32" Width="320" HorizontalAlignment="Left" TextChanged="NameBox_TextChanged" />
+                </StackPanel>
+
+                <!-- 6: Finish -->
+                <StackPanel x:Name="StepFinish" Visibility="Collapsed">
+                    <TextBlock x:Name="FinishTitle" Style="{StaticResource TitleText}" Text="Setting things up…" />
+                    <TextBox x:Name="FinishLog" Margin="0,16,0,0" Height="130" IsReadOnly="True" TextWrapping="Wrap"
+                             VerticalScrollBarVisibility="Auto" FontFamily="Cascadia Mono, Consolas" FontSize="12" />
+
+                    <Border x:Name="HowToPlay" Style="{StaticResource Card}" Margin="0,16,0,0" Visibility="Collapsed">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource HeadingText}" Text="How to play" Margin="0,0,0,10" />
+                            <TextBlock Style="{StaticResource BodyText}" Margin="0,0,0,8">
+                                <Run FontWeight="SemiBold" Text="Hosting:" />
+                                <Run Text=" press Play. In Valheim pick your character, choose the world" /> <Run x:Name="HowToWorld" FontWeight="SemiBold" /><Run Text=", tick" /> <Run FontWeight="SemiBold" Text="Start server" /> <Run Text="(set a password) and press Start." />
+                            </TextBlock>
+                            <TextBlock Style="{StaticResource BodyText}" Margin="0,0,0,8">
+                                <Run FontWeight="SemiBold" Text="Joining:" />
+                                <Run Text=" press Play. The app tells you who's hosting and starts Valheim. Join them from your Steam friends list (Join Game) or with their join code." />
+                            </TextBlock>
+                            <TextBlock Style="{StaticResource BodyText}" Margin="0,0,0,8">
+                                <Run FontWeight="SemiBold" Text="Quitting:" />
+                                <Run Text=" just close Valheim. Keep this app open while you play — it uploads the world as soon as the game is closed." />
+                            </TextBlock>
+                            <TextBlock Style="{StaticResource MutedText}">
+                                <Run Text="If Valheim shows two worlds with this name, use the local one, not the Steam Cloud one. Never play the shared world without this app, or the others won't get your progress." />
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+
+            </Grid>
+        </ScrollViewer>
+
+        <Border Grid.Row="1" BorderThickness="0,1,0,0" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" Padding="36,14">
+            <Grid>
+                <TextBlock x:Name="StepLabel" Style="{StaticResource MutedText}" VerticalAlignment="Center" />
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button x:Name="CancelButton" Content="Cancel" MinWidth="100" Padding="16,6" Margin="0,0,8,0" Click="Cancel_Click" />
+                    <Button x:Name="BackButton" Content="Back" MinWidth="100" Padding="16,6" Margin="0,0,8,0" Click="Back_Click" />
+                    <Button x:Name="NextButton" Content="Next" MinWidth="120" Padding="16,6" Style="{DynamicResource AccentButtonStyle}" Click="Next_Click" />
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

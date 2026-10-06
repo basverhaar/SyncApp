@@ -6,3 +6,8 @@
 Thumbs.db
 .vscode/
 .idea/
+
+# Build output
+bin/
+obj/
+dist/
