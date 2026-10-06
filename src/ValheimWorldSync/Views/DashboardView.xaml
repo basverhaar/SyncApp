@@ -32,6 +32,8 @@
                     <TextBlock x:Name="HostText" Style="{StaticResource HeadingText}" Text="Checking…" />
                     <TextBlock x:Name="SharedText" Style="{StaticResource MutedText}" Margin="0,6,0,0" />
                     <TextBlock x:Name="LocalText" Style="{StaticResource MutedText}" Margin="0,2,0,0" />
+                    <TextBlock x:Name="WarningText" Style="{StaticResource BodyText}" Margin="0,8,0,0" Visibility="Collapsed"
+                               Foreground="{DynamicResource SystemFillColorCautionBrush}" />
                 </StackPanel>
             </Grid>
         </Border>

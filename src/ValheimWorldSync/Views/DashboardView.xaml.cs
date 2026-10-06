@@ -94,6 +94,10 @@ public partial class DashboardView : UserControl
                 _ => "",
             };
 
+            WarningText.Text = $"⚠  There's also a Steam Cloud copy of \"{settings.WorldName}\" in Valheim. Always pick the locally stored one, " +
+                               "or remove the Steam Cloud copy in Valheim (Manage saves).";
+            WarningText.Visibility = status.HasSteamCloudCopy && status.Problem == null ? Visibility.Visible : Visibility.Collapsed;
+
             if (status.Problem != null)
             {
                 SetDot("SystemFillColorCriticalBrush");

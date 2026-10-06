@@ -43,6 +43,15 @@ public sealed class ActiveSession
     public DateTimeOffset StartedAt { get; set; }
     /// <summary>The shared version this session started from; used to detect a second host.</summary>
     public int BaseVersion { get; set; }
+
+    /// <summary>Hash of the local world when the game was started.</summary>
+    public string? LocalHashAtStart { get; set; }
+
+    /// <summary>
+    /// Hash of the Steam Cloud copy of the world (if there is one) when the game was started.
+    /// Used to notice that Valheim loaded that copy instead of the local one.
+    /// </summary>
+    public string? SteamCloudHashAtStart { get; set; }
 }
 
 public static class Manifest

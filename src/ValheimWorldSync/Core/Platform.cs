@@ -48,9 +48,17 @@ public static partial class Valheim
     public static void LaunchViaSteam() =>
         Process.Start(new ProcessStartInfo($"steam://rungameid/{SteamAppId}") { UseShellExecute = true });
 
+    /// <summary>For tests: use these folders instead of the real Steam Cloud folders.</summary>
+    internal static IReadOnlyList<string>? SteamCloudWorldDirsOverride { get; set; }
+
     /// <summary>Valheim's Steam Cloud world folders (one per Steam account on this PC).</summary>
     public static IEnumerable<string> SteamCloudWorldDirs()
     {
+        if (SteamCloudWorldDirsOverride is { } overridden)
+        {
+            foreach (var dir in overridden) yield return dir;
+            yield break;
+        }
         if (SteamPath is not { } steam) yield break;
         var userdata = Path.Combine(steam, "userdata");
         if (!Directory.Exists(userdata)) yield break;

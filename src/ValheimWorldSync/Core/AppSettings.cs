@@ -32,6 +32,9 @@ public sealed class AppSettings
 
     public ActiveSession? ActiveSession { get; set; }
 
+    /// <summary>Hash of the Steam Cloud copy last backed up, so it isn't backed up again on every Play.</summary>
+    public string? LastSteamCloudBackupHash { get; set; }
+
     [JsonIgnore]
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(SharedFolder) &&

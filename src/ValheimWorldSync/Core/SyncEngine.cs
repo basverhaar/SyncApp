@@ -18,7 +18,8 @@ public sealed record SharedStatus(
     HostClaim? ActiveHost,
     HostClaim? StaleHost,
     SharedState? State,
-    LocalWorldState Local);
+    LocalWorldState Local,
+    bool HasSteamCloudCopy = false);
 
 public sealed class SyncEngine(AppSettings settings, IUserPrompt prompt)
 {
@@ -69,7 +70,11 @@ public sealed class SyncEngine(AppSettings settings, IUserPrompt prompt)
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
 
-        return new SharedStatus(null, active, stale, state, local);
+        var hasCloudCopy = Valheim.SteamCloudWorldDirs()
+            .SelectMany(dir => WorldStore.Discover(dir, isSteamCloud: true))
+            .Any(w => w.Name.Equals(World, StringComparison.OrdinalIgnoreCase));
+
+        return new SharedStatus(null, active, stale, state, local, hasCloudCopy);
     }
 
     private async Task<string> LocalHashAsync()
@@ -155,7 +160,38 @@ public sealed class SyncEngine(AppSettings settings, IUserPrompt prompt)
                 return;
             }
 
-            settings.ActiveSession = new ActiveSession { SessionId = claim.SessionId, StartedAt = now, BaseVersion = baseState.Version };
+            var cloudCopy = await FindSteamCloudCopyAsync();
+            if (cloudCopy != null)
+            {
+                var choice = await prompt.AskAsync($"Two copies of \"{World}\"",
+                    $"Valheim also has a Steam Cloud copy of \"{World}\", next to the local copy this app syncs. " +
+                    "If you load the Steam Cloud one, your progress isn't saved where the app looks for it.\n\n" +
+                    $"In Valheim's world list, pick the \"{World}\" that's stored locally, not the Steam Cloud one. " +
+                    "To get rid of this warning, remove the Steam Cloud copy in Valheim (Manage saves). The app has a backup of it.\n\n" +
+                    "If you pick the Steam Cloud copy by mistake, the app notices when you quit and helps you sort it out.",
+                    "Start Valheim", "Cancel");
+                if (choice != 0)
+                {
+                    hosts.DeleteOwn();
+                    claimed = false;
+                    Log.Info("Cancelled.");
+                    return;
+                }
+                if (cloudCopy.Hash != settings.LastSteamCloudBackupHash)
+                {
+                    await WorldStore.BackupAsync(cloudCopy.Dir, World, "steam-cloud-copy");
+                    settings.LastSteamCloudBackupHash = cloudCopy.Hash;
+                }
+            }
+
+            settings.ActiveSession = new ActiveSession
+            {
+                SessionId = claim.SessionId,
+                StartedAt = now,
+                BaseVersion = baseState.Version,
+                LocalHashAtStart = baseState.Hash,
+                SteamCloudHashAtStart = cloudCopy?.Hash,
+            };
             settings.Save();
             claimed = false; // From here on the session is tracked in settings and recovered if anything goes wrong.
 
@@ -295,10 +331,11 @@ public sealed class SyncEngine(AppSettings settings, IUserPrompt prompt)
         await FinishSessionAsync();
     }
 
-    private async Task FinishSessionAsync()
+    internal async Task FinishSessionAsync()
     {
         var session = settings.ActiveSession!;
         await EnsureReadyAsync();
+        await RescueSteamCloudSessionAsync(session);
         var uploaded = await UploadAsync(session.BaseVersion);
 
         TryRun(() => Hosts.DeleteOwn());
@@ -306,8 +343,85 @@ public sealed class SyncEngine(AppSettings settings, IUserPrompt prompt)
         settings.Save();
 
         if (uploaded is { } state)
-            Log.Info($"Done! Version {state.Version} is saved to Google Drive. Leave your PC on for a minute so Google Drive can finish uploading.");
+            Log.Info($"Done! The shared world is version {state.Version} (saved by {state.UpdatedBy} {Format.Ago(state.UpdatedAt)}). Leave your PC on for a minute so Google Drive can finish uploading.");
         SessionFinished?.Invoke();
+    }
+
+    // ───────────────────────────── Steam Cloud copy ─────────────────────────────
+
+    private sealed record CloudCopy(string Dir, List<WorldFile> Files, string Hash, DateTime LastWrite);
+
+    /// <summary>
+    /// Finds a Steam Cloud copy of the shared world. Valheim lists it next to the local copy,
+    /// and if a player loads it, their progress is saved there instead of where this app syncs.
+    /// </summary>
+    private async Task<CloudCopy?> FindSteamCloudCopyAsync()
+    {
+        var info = Valheim.SteamCloudWorldDirs()
+            .SelectMany(dir => WorldStore.Discover(dir, isSteamCloud: true))
+            .Where(w => w.Name.Equals(World, StringComparison.OrdinalIgnoreCase))
+            .MaxBy(w => w.LastWrite);
+        if (info == null) return null;
+        var files = await WorldStore.ScanAsync(info.WorldsDir, info.Name);
+        return new CloudCopy(info.WorldsDir, files, WorldStore.HashOf(files), info.LastWrite);
+    }
+
+    private static DateTime LastSaved(IEnumerable<WorldFile> files) =>
+        files.Select(f => File.GetLastWriteTime(f.FullPath)).DefaultIfEmpty(DateTime.MinValue).Max();
+
+    private async Task ImportSteamCloudCopyAsync(CloudCopy cloud)
+    {
+        await WorldStore.BackupAsync(LocalDir, World, "before-steam-cloud-import");
+        await WorldStore.MirrorAsync(cloud.Files, LocalDir, World);
+        Log.Info($"Copied the Steam Cloud copy (saved by Valheim at {Format.Time(cloud.LastWrite)}) to the local copy.");
+    }
+
+    /// <summary>After a session: if Valheim saved to the Steam Cloud copy instead of the local one, bring that progress over.</summary>
+    private async Task RescueSteamCloudSessionAsync(ActiveSession session)
+    {
+        if (session.SteamCloudHashAtStart == null || session.LocalHashAtStart == null) return;
+        var cloud = await FindSteamCloudCopyAsync();
+        if (cloud == null || cloud.Hash == session.SteamCloudHashAtStart) return; // Not played.
+
+        var localHash = WorldStore.HashOf(await WorldStore.ScanAsync(LocalDir, World));
+        Log.Info($"Valheim saved this session to the Steam Cloud copy of \"{World}\" instead of the local copy.");
+
+        bool import;
+        if (localHash != session.LocalHashAtStart)
+        {
+            var choice = await prompt.AskAsync("Both copies changed",
+                $"Both the local copy and the Steam Cloud copy of \"{World}\" changed while you were playing. Which one should be uploaded? " +
+                "The other one is backed up.",
+                "Local copy", "Steam Cloud copy");
+            import = choice == 1;
+        }
+        else if (session.SteamCloudHashAtStart == session.LocalHashAtStart)
+        {
+            // The Steam Cloud copy was identical to the shared version at the start, so its progress is safe to use.
+            import = true;
+        }
+        else
+        {
+            var choice = await prompt.AskAsync("Valheim used an outdated copy",
+                $"You played the Steam Cloud copy of \"{World}\", but that copy was older than the shared version you started from (version {session.BaseVersion}). " +
+                "Uploading it would undo progress from the newer versions.\n\n" +
+                "Keep the shared version, or upload this session anyway? Either way, this session is kept in the backups folder.",
+                "Keep shared version", "Upload this session");
+            import = choice == 1;
+        }
+
+        if (!import)
+        {
+            await WorldStore.BackupAsync(cloud.Dir, World, "steam-cloud-session-not-uploaded");
+            Log.Info("Kept the shared version. The Steam Cloud session is in the backups folder.");
+            return;
+        }
+
+        await ImportSteamCloudCopyAsync(cloud);
+        await prompt.AskAsync("Progress rescued",
+            $"Valheim loaded the Steam Cloud copy of \"{World}\" instead of the local one. The app copied your progress over and is uploading it now.\n\n" +
+            $"Next time, pick the locally stored \"{World}\" in Valheim, or remove the Steam Cloud copy (Manage saves) so this can't happen again.",
+            "OK");
     }
 
     // ───────────────────────────── Sync ─────────────────────────────
@@ -320,6 +434,25 @@ public sealed class SyncEngine(AppSettings settings, IUserPrompt prompt)
         Log.Info("Checking for a newer version of the world…");
         var local = await WorldStore.ScanAsync(LocalDir, World);
         var localHash = WorldStore.HashOf(local);
+
+        var importedFromCloud = false;
+        if (await FindSteamCloudCopyAsync() is { } cloud && cloud.Hash != localHash && cloud.LastWrite > LastSaved(local))
+        {
+            var cloudChoice = await prompt.AskAsync("Newer Steam Cloud copy found",
+                $"Valheim also has a Steam Cloud copy of \"{World}\", saved {Format.Time(cloud.LastWrite)}. That's newer than the copy this app syncs " +
+                $"(saved {Format.Time(LastSaved(local))}).\n\n" +
+                "This happens when Valheim loads the Steam Cloud world instead of the local one, so that progress was never synced.\n\n" +
+                "Use the Steam Cloud copy? Your local copy is backed up.",
+                "Use Steam Cloud copy", "Ignore it", "Cancel");
+            if (cloudChoice is < 0 or 2) return null;
+            if (cloudChoice == 0)
+            {
+                await ImportSteamCloudCopyAsync(cloud);
+                local = await WorldStore.ScanAsync(LocalDir, World);
+                localHash = WorldStore.HashOf(local);
+                importedFromCloud = true;
+            }
+        }
 
         if (state == null)
         {
@@ -337,6 +470,9 @@ public sealed class SyncEngine(AppSettings settings, IUserPrompt prompt)
 
         if (localHash == "" || localHash == settings.LastSyncedHash)
             return await DownloadAsync(state);
+
+        if (importedFromCloud && state.Hash == settings.LastSyncedHash)
+            return await UploadAsync(state.Version);
 
         string message;
         string[] buttons;
@@ -418,7 +554,7 @@ public sealed class SyncEngine(AppSettings settings, IUserPrompt prompt)
         if (state != null && state.Hash == localHash)
         {
             MarkSynced(state);
-            Log.Info("The world didn't change — nothing to upload.");
+            Log.Info($"The world on this PC didn't change since version {state.Version} (last saved by Valheim at {Format.Time(LastSaved(local))}), so there was nothing to upload.");
             return state;
         }
 
@@ -457,7 +593,7 @@ public sealed class SyncEngine(AppSettings settings, IUserPrompt prompt)
         };
         shared.WriteState(newState);
         MarkSynced(newState);
-        Log.Info($"Uploaded version {newState.Version} ({copied} file(s) changed).");
+        Log.Info($"Uploaded version {newState.Version}: {copied} file(s) changed, world last saved by Valheim at {Format.Time(LastSaved(local))}.");
         return newState;
     }
 

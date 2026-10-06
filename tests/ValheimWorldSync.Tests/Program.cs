@@ -39,6 +39,9 @@ else
 }
 File.WriteAllText(Path.Combine(sampleDir, world, "cacheMinimapMeta"), "cache"); // must be ignored
 
+// Never look at the real Steam Cloud folders from tests: every simulated PC gets its own.
+Valheim.SteamCloudWorldDirsOverride = [];
+
 var sharedRoot = Path.Combine(root, "shared");
 Directory.CreateDirectory(sharedRoot);
 var shared = new SharedFolder(sharedRoot);
@@ -48,7 +51,8 @@ Machine NewMachine(string name)
 {
     var dir = Path.Combine(root, name);
     var settings = new AppSettings { PlayerName = name, SharedFolder = sharedRoot, WorldName = world };
-    return new Machine(name, Path.Combine(dir, "worlds_local"), Path.Combine(dir, "data"), settings, new SyncEngine(settings, prompt));
+    Directory.CreateDirectory(Path.Combine(dir, "steam-cloud"));
+    return new Machine(name, Path.Combine(dir, "worlds_local"), Path.Combine(dir, "data"), Path.Combine(dir, "steam-cloud"), settings, new SyncEngine(settings, prompt));
 }
 var a = NewMachine("Alice");
 var b = NewMachine("Bob");
@@ -154,9 +158,83 @@ hostsA.DeleteOwn();
 hostsB.DeleteOwn();
 Check(hostsA.ReadAll().Count == 0, "claims are removed");
 
+// 11. Valheim played the Steam Cloud copy in an earlier session: offered before the next Play, then uploaded.
+a.Use();
+await a.Engine.SyncBeforePlayAsync(); // Alice is on the latest version
+var cloudWorlds = a.CloudDir;
+var cloudWorld = Path.Combine(cloudWorlds, world);
+void SetCloudTime(DateTime t)
+{
+    foreach (var f in Directory.EnumerateFiles(cloudWorld, "*", SearchOption.AllDirectories)) File.SetLastWriteTime(f, t);
+}
+string CloudChunk() => Directory.EnumerateFiles(cloudWorld, "*.chunk").Order().First();
+CopyWorld(a.WorldsDir, cloudWorlds, world);
+File.AppendAllText(CloudChunk(), "played in steam cloud copy");
+SetCloudTime(DateTime.Now.AddMinutes(5));
+var before = shared.ReadState()!.Version;
+prompt.Asked.Clear();
+prompt.Answers.Enqueue(0); // Use Steam Cloud copy
+var afterCloud = await a.Engine.SyncBeforePlayAsync();
+var cloudHash = WorldStore.HashOf(await WorldStore.ScanAsync(cloudWorlds, world));
+Check(prompt.Asked.SequenceEqual(["Newer Steam Cloud copy found"]), "a newer Steam Cloud copy is offered, with no extra questions");
+Check(afterCloud?.Version == before + 1 && afterCloud.Hash == cloudHash, "the Steam Cloud progress is uploaded as a new version");
+
+// 12. During a session Valheim saves to the Steam Cloud copy (identical at start): rescued automatically.
+var startHash = await LocalHash(a);
+a.Settings.ActiveSession = new ActiveSession
+{
+    SessionId = "s1", StartedAt = DateTimeOffset.UtcNow, BaseVersion = afterCloud!.Version,
+    LocalHashAtStart = startHash, SteamCloudHashAtStart = cloudHash,
+};
+File.AppendAllText(CloudChunk(), "session in cloud copy");
+prompt.Asked.Clear();
+await a.Engine.FinishSessionAsync();
+var rescued = shared.ReadState()!;
+Check(rescued.Version == afterCloud.Version + 1 && rescued.Hash == WorldStore.HashOf(await WorldStore.ScanAsync(cloudWorlds, world)),
+    "a session saved to the Steam Cloud copy is uploaded");
+Check(prompt.Asked.SequenceEqual(["Progress rescued"]), "the player is told what happened");
+Check(a.Settings.ActiveSession == null, "the session is finished");
+
+// 13. Valheim loaded an outdated Steam Cloud copy: asked, and the shared version is kept.
+prompt.Asked.Clear();
+b.Use();
+await b.Engine.SyncBeforePlayAsync();
+File.AppendAllText(ChunkFile(b), "bob newer progress");
+var bobVersion = await b.Engine.UploadAsync(rescued.Version);
+a.Use();
+SetCloudTime(DateTime.Now.AddHours(-2)); // older than Bob's save, so it isn't offered before Play
+await a.Engine.SyncBeforePlayAsync();
+Check(await LocalHash(a) == bobVersion!.Hash, "Alice downloads Bob's newer version");
+a.Settings.ActiveSession = new ActiveSession
+{
+    SessionId = "s2", StartedAt = DateTimeOffset.UtcNow, BaseVersion = bobVersion.Version,
+    LocalHashAtStart = bobVersion.Hash,
+    SteamCloudHashAtStart = WorldStore.HashOf(await WorldStore.ScanAsync(cloudWorlds, world)),
+};
+File.AppendAllText(CloudChunk(), "played the outdated cloud copy");
+Check(prompt.Asked.Count == 0, "no Steam Cloud questions on a PC without a Steam Cloud copy");
+prompt.Asked.Clear();
+prompt.Answers.Enqueue(0); // Keep shared version
+await a.Engine.FinishSessionAsync();
+Check(prompt.Asked.FirstOrDefault() == "Valheim used an outdated copy", "playing an outdated Steam Cloud copy asks first");
+Check(shared.ReadState()!.Version == bobVersion.Version && shared.ReadState()!.Hash == bobVersion.Hash, "Bob's progress is not overwritten");
+Check(Directory.EnumerateDirectories(Path.Combine(a.DataDir, "Backups", world)).Any(d => d.EndsWith("steam-cloud-session-not-uploaded")),
+    "the outdated session is kept as a backup");
+
 Console.WriteLine(failures == 0 ? "\nAll checks passed." : $"\n{failures} check(s) FAILED.");
 try { Directory.Delete(root, true); } catch { }
 return failures == 0 ? 0 : 1;
+
+static void CopyWorld(string fromWorlds, string toWorlds, string world)
+{
+    var from = Path.Combine(fromWorlds, world);
+    foreach (var f in Directory.EnumerateFiles(from, "*", SearchOption.AllDirectories))
+    {
+        var dest = Path.Combine(toWorlds, world, Path.GetRelativePath(from, f));
+        Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+        File.Copy(f, dest, overwrite: true);
+    }
+}
 
 static bool TryCreateLink(string link, string target)
 {
@@ -173,12 +251,13 @@ static bool TryCreateLink(string link, string target)
     }
 }
 
-sealed record Machine(string Name, string WorldsDir, string DataDir, AppSettings Settings, SyncEngine Engine)
+sealed record Machine(string Name, string WorldsDir, string DataDir, string CloudDir, AppSettings Settings, SyncEngine Engine)
 {
     public void Use()
     {
         AppPaths.LocalWorldsDir = WorldsDir;
         AppPaths.DataDir = DataDir;
+        Valheim.SteamCloudWorldDirsOverride = [CloudDir];
     }
 }
 
