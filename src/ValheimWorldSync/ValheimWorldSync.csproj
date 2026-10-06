@@ -10,7 +10,7 @@
     <AssemblyName>ValheimWorldSync</AssemblyName>
     <RootNamespace>ValheimWorldSync</RootNamespace>
     <Product>Valheim World Sync</Product>
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <ApplicationIcon>Assets\app.ico</ApplicationIcon>
     <!-- WPF Fluent theme (Application.ThemeMode) is still flagged as experimental. -->
     <NoWarn>$(NoWarn);WPF0001</NoWarn>
