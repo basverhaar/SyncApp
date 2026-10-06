@@ -3,6 +3,9 @@
 A small Windows app that lets a group of friends share one Valheim world through a Google Drive folder,
 so whoever is online can host it.
 
+**[⬇ Download ValheimWorldSync.exe](https://github.com/basverhaar/SyncApp/releases/latest/download/ValheimWorldSync.exe)**
+(Windows 10/11, no installation needed; see [all releases](https://github.com/basverhaar/SyncApp/releases))
+
 - **Play** checks whether a friend is already hosting. If so, it starts Valheim so you can join them.
 - If nobody is hosting, it downloads the newest version of the world, starts Valheim through Steam, and you host.
 - When you close Valheim, the world is uploaded back to Google Drive automatically.
