@@ -30,7 +30,7 @@
                 </ListBox.ItemTemplate>
             </ListBox>
             <TextBlock x:Name="EmptyText" Style="{StaticResource MutedText}" Margin="16" Visibility="Collapsed"
-                       Text="There are no automatic backups on this PC yet. Use &quot;Choose a file…&quot; to restore a .zip backup." />
+                       Text="There are no automatic backups yet. Use &quot;Choose a file…&quot; to restore a .zip backup." />
         </Grid>
 
         <DockPanel Grid.Row="3" Margin="0,20,0,0">

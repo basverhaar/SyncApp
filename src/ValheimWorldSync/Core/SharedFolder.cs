@@ -8,6 +8,7 @@ namespace ValheimWorldSync.Core;
 ///   state.json       - latest uploaded version (hashes of every file)
 ///   world\           - the world files
 ///   hosts\           - one file per PC that is currently hosting
+///   backups\         - copies of everyone's automatic backups, as .zip files
 /// </summary>
 public sealed class SharedFolder(string root)
 {
@@ -16,6 +17,7 @@ public sealed class SharedFolder(string root)
     public string StateFile => Path.Combine(Root, "state.json");
     public string WorldDir => Path.Combine(Root, "world");
     public string HostsDir => Path.Combine(Root, "hosts");
+    public string BackupsDir => Path.Combine(Root, "backups");
 
     public bool Exists => Directory.Exists(Root);
 

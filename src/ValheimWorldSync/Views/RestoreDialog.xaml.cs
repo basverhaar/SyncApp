@@ -14,13 +14,32 @@ public partial class RestoreDialog : Window
 
     private (string Path, string Description)? result;
 
-    private RestoreDialog(string world)
+    private RestoreDialog(AppSettings settings, string world)
     {
         InitializeComponent();
         IntroText.Text = $"Pick a version of \"{world}\" to make the shared version again. The current version is backed up first, so you can undo this.";
 
-        var items = WorldStore.ListBackups(world)
-            .Select(b => new Item(b.Dir, b.Created.ToString("dddd d MMMM yyyy, HH:mm"), $"{Describe(b.Reason)}  ·  {Format.Size(b.Size)}"))
+        // Backups on Google Drive (from everyone), plus the ones on this PC that didn't make it to Google Drive.
+        var shared = new List<BackupInfo>();
+        try
+        {
+            if (settings.SharedFolder != null)
+                shared = WorldStore.ListSharedBackups(Path.Combine(new SharedFolder(settings.SharedFolder).BackupsDir, world));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Log.Info($"Couldn't list the backups on Google Drive ({ex.Message}).");
+        }
+        var local = WorldStore.ListBackups(world).Where(b =>
+        {
+            var prefix = WorldStore.SharedBackupPrefix(b.Location, settings.PlayerName);
+            return !shared.Any(s => Path.GetFileName(s.Location).StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+        });
+
+        var items = shared.Concat(local)
+            .OrderByDescending(b => b.Created)
+            .Select(b => new Item(b.Location, b.Created.ToString("dddd d MMMM yyyy, HH:mm"),
+                $"{Describe(b.Reason)}  ·  {Format.Size(b.Size)}  ·  {(b.IsShared ? $"Google Drive, from {b.SharedBy}" : "Only on this PC")}"))
             .ToList();
         BackupList.ItemsSource = items;
         if (items.Count == 0)
@@ -32,9 +51,9 @@ public partial class RestoreDialog : Window
 
     private static string Describe(string reason) => reason switch
     {
-        "before download" => "Your copy, saved before downloading a newer version",
+        "before download" => "Copy saved before downloading a newer version",
         "before restore" => "Saved before restoring a backup",
-        "my version not uploaded" => "Your version that wasn't uploaded (two hosts at once)",
+        "my version not uploaded" => "Version that wasn't uploaded (two hosts at once)",
         "steam cloud copy" or "steam cloud original" => "Steam Cloud copy",
         "steam cloud session not uploaded" => "Session played on an outdated Steam Cloud copy",
         _ when reason.StartsWith("shared v") && reason.EndsWith(" replaced") =>
@@ -43,9 +62,9 @@ public partial class RestoreDialog : Window
         _ => char.ToUpper(reason[0]) + reason[1..],
     };
 
-    public static (string Path, string Description)? Show(Window owner, string world)
+    public static (string Path, string Description)? Show(Window owner, AppSettings settings, string world)
     {
-        var dialog = new RestoreDialog(world) { Owner = owner };
+        var dialog = new RestoreDialog(settings, world) { Owner = owner };
         dialog.ShowDialog();
         return dialog.result;
     }

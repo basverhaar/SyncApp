@@ -180,7 +180,7 @@ public sealed class SyncEngine(AppSettings settings, IUserPrompt prompt)
                 }
                 if (cloudCopy.Hash != settings.LastSteamCloudBackupHash)
                 {
-                    await WorldStore.BackupAsync(cloudCopy.Dir, World, "steam-cloud-copy");
+                    await BackupAsync(cloudCopy.Dir, World, "steam-cloud-copy");
                     settings.LastSteamCloudBackupHash = cloudCopy.Hash;
                 }
             }
@@ -372,7 +372,7 @@ public sealed class SyncEngine(AppSettings settings, IUserPrompt prompt)
 
     private async Task ImportSteamCloudCopyAsync(CloudCopy cloud)
     {
-        await WorldStore.BackupAsync(LocalDir, World, "before-steam-cloud-import");
+        await BackupAsync(LocalDir, World, "before-steam-cloud-import");
         await WorldStore.MirrorAsync(cloud.Files, LocalDir, World);
         Log.Info($"Copied the Steam Cloud copy (saved by Valheim at {Format.Time(cloud.LastWrite)}) to the local copy.");
     }
@@ -413,7 +413,7 @@ public sealed class SyncEngine(AppSettings settings, IUserPrompt prompt)
 
         if (!import)
         {
-            await WorldStore.BackupAsync(cloud.Dir, World, "steam-cloud-session-not-uploaded");
+            await BackupAsync(cloud.Dir, World, "steam-cloud-session-not-uploaded");
             Log.Info("Kept the shared version. The Steam Cloud session is in the backups folder.");
             return;
         }
@@ -503,7 +503,7 @@ public sealed class SyncEngine(AppSettings settings, IUserPrompt prompt)
         if (choice < 0 || buttons[choice] == "Cancel") return null;
         if (buttons[choice] == "Use shared version") return await DownloadAsync(state);
 
-        await WorldStore.BackupAsync(shared.WorldDir, World, $"shared-v{state.Version}-replaced");
+        await BackupAsync(shared.WorldDir, World, $"shared-v{state.Version}-replaced");
         return await UploadAsync(state.Version);
     }
 
@@ -526,7 +526,7 @@ public sealed class SyncEngine(AppSettings settings, IUserPrompt prompt)
             state = shared.ReadState() ?? state;
         }
 
-        if (await WorldStore.BackupAsync(LocalDir, World, "before-download") is { } backup)
+        if (await BackupAsync(LocalDir, World, "before-download") is { } backup)
             Log.Info($"Backed up your local copy to {backup}");
 
         Directory.CreateDirectory(LocalDir);
@@ -570,10 +570,10 @@ public sealed class SyncEngine(AppSettings settings, IUserPrompt prompt)
                 "Keep mine", $"Keep {other}'s");
             if (choice == 1)
             {
-                await WorldStore.BackupAsync(LocalDir, World, "my-version-not-uploaded");
+                await BackupAsync(LocalDir, World, "my-version-not-uploaded");
                 return await DownloadAsync(state);
             }
-            await WorldStore.BackupAsync(shared.WorldDir, World, $"shared-v{state.Version}-replaced");
+            await BackupAsync(shared.WorldDir, World, $"shared-v{state.Version}-replaced");
         }
 
         Log.Info("Uploading the world to Google Drive…");
@@ -606,6 +606,47 @@ public sealed class SyncEngine(AppSettings settings, IUserPrompt prompt)
     }
 
     // ───────────────────────────── Backups ─────────────────────────────
+
+    private const int SharedBackupsToKeep = 10;
+
+    /// <summary>
+    /// Backs up a world on this PC and puts a .zip copy in the shared folder, so the group keeps it even if this PC is lost.
+    /// A copy that's already in the shared folder (same files) isn't uploaded again.
+    /// </summary>
+    private async Task<string?> BackupAsync(string worldsDir, string world, string reason)
+    {
+        var backup = await WorldStore.BackupAsync(worldsDir, world, reason);
+        if (backup == null) return null;
+
+        string? temp = null;
+        try
+        {
+            var shared = Shared;
+            if (!shared.Exists) return backup;
+            var files = await WorldStore.ScanAsync(backup, world);
+            var hash = WorldStore.HashOf(files);
+            var dir = Path.Combine(shared.BackupsDir, world);
+            if (WorldStore.ListSharedBackups(dir).Any(b => b.Hash is { Length: > 0 } h && hash.StartsWith(h, StringComparison.OrdinalIgnoreCase)))
+                return backup;
+
+            // Build the .zip on this PC first, so Google Drive never sees (and uploads) a half-written file.
+            var name = WorldStore.SharedBackupName(backup, settings.PlayerName, hash);
+            temp = Path.Combine(Path.GetTempPath(), "ValheimWorldSync-" + name);
+            await WorldStore.ExportZipAsync(files, temp);
+            Directory.CreateDirectory(dir);
+            await Task.Run(() => File.Move(temp, Path.Combine(dir, name), overwrite: true));
+            WorldStore.PruneSharedBackups(dir, SharedBackupsToKeep);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Log.Info($"Couldn't copy the backup to Google Drive ({ex.Message}). It's still on this PC.");
+        }
+        finally
+        {
+            if (temp != null) TryRun(() => File.Delete(temp));
+        }
+        return backup;
+    }
 
     /// <summary>Saves the latest version of the world as a .zip the player keeps wherever they like.</summary>
     public async Task ExportBackupAsync(string zipPath)
@@ -705,9 +746,9 @@ public sealed class SyncEngine(AppSettings settings, IUserPrompt prompt)
             if (choice != 0) return;
 
             var localHash = WorldStore.HashOf(await WorldStore.ScanAsync(LocalDir, World));
-            await WorldStore.BackupAsync(LocalDir, World, "before-restore");
+            await BackupAsync(LocalDir, World, "before-restore");
             if (state != null && localHash != state.Hash)
-                await WorldStore.BackupAsync(shared.WorldDir, World, $"shared-v{state.Version}-replaced");
+                await BackupAsync(shared.WorldDir, World, $"shared-v{state.Version}-replaced");
 
             Directory.CreateDirectory(LocalDir);
             await WorldStore.MirrorAsync(files, LocalDir, World);
@@ -767,9 +808,9 @@ public sealed class SyncEngine(AppSettings settings, IUserPrompt prompt)
         if (source.IsSteamCloud)
         {
             Log.Info($"Copying \"{world}\" from Steam Cloud to this PC's local saves…");
-            if (await WorldStore.BackupAsync(LocalDir, world, "before-copy-from-steam-cloud") is { } backup)
+            if (await BackupAsync(LocalDir, world, "before-copy-from-steam-cloud") is { } backup)
                 Log.Info($"Backed up the existing local copy to {backup}");
-            await WorldStore.BackupAsync(source.WorldsDir, world, "steam-cloud-original");
+            await BackupAsync(source.WorldsDir, world, "steam-cloud-original");
             var files = await WorldStore.ScanAsync(source.WorldsDir, world);
             Directory.CreateDirectory(LocalDir);
             await WorldStore.MirrorAsync(files, LocalDir, world);

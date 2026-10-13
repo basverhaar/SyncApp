@@ -171,7 +171,7 @@ public partial class DashboardView : UserControl
 
     private async void Restore_Click(object sender, RoutedEventArgs e)
     {
-        if (settings.WorldName == null || RestoreDialog.Show(Window.GetWindow(this), settings.WorldName) is not { } choice) return;
+        if (settings.WorldName == null || RestoreDialog.Show(Window.GetWindow(this), settings, settings.WorldName) is not { } choice) return;
         await engine.RestoreBackupAsync(choice.Path, choice.Description);
         await RefreshAsync();
     }

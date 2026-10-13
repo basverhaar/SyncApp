@@ -10,8 +10,14 @@ public sealed record WorldInfo(string Name, string WorldsDir, bool IsSteamCloud,
     public string Location => IsSteamCloud ? "Steam Cloud" : "This PC";
 }
 
-/// <summary>An automatic backup in the app's backups folder.</summary>
-public sealed record BackupInfo(string Dir, DateTime Created, string Reason, long Size);
+/// <summary>
+/// An automatic backup: a folder in this PC's backups folder, or (when <see cref="SharedBy"/> is set)
+/// a .zip in the shared folder's backups\ folder.
+/// </summary>
+public sealed record BackupInfo(string Location, DateTime Created, string Reason, long Size, string? SharedBy = null, string? Hash = null)
+{
+    public bool IsShared => SharedBy != null;
+}
 
 /// <summary>A world file with its location on disk.</summary>
 public sealed record WorldFile(string Relative, string FullPath, long Size, string Sha256)
@@ -143,7 +149,7 @@ public static class WorldStore
             return (string?)target;
         });
 
-    /// <summary>The automatic backups of a world, newest first.</summary>
+    /// <summary>The automatic backups of a world on this PC, newest first.</summary>
     public static List<BackupInfo> ListBackups(string world)
     {
         var root = new DirectoryInfo(Path.Combine(AppPaths.BackupsDir, world));
@@ -152,15 +158,54 @@ public static class WorldStore
         foreach (var dir in root.GetDirectories().OrderByDescending(d => d.Name))
         {
             // Folder names look like 2026-10-13_20-15-00_before-download.
-            var parts = dir.Name.Split('_', 3);
-            if (parts.Length < 2 || !DateTime.TryParseExact($"{parts[0]}_{parts[1]}", "yyyy-MM-dd_HH-mm-ss",
-                    null, System.Globalization.DateTimeStyles.None, out var created))
-                created = dir.CreationTime;
-            var reason = parts.Length == 3 ? parts[2].Replace('-', ' ') : "";
+            var (created, reason, _) = ParseBackupName(dir.Name, dir.CreationTime);
             var size = EnumerateFiles(dir.FullName, world).Sum(f => new FileInfo(f.FullPath).Length);
             if (size > 0) result.Add(new BackupInfo(dir.FullName, created, reason, size));
         }
         return result;
+    }
+
+    /// <summary>The file name for a backup in the shared folder, e.g. 2026-10-13_20-15-00_before-download_Bas_1A2B3C4D5E6F.zip.</summary>
+    public static string SharedBackupName(string localBackupDir, string playerName, string hash) =>
+        $"{SharedBackupPrefix(localBackupDir, playerName)}{hash[..12]}.zip";
+
+    /// <summary>The start of <see cref="SharedBackupName"/>: everything except the hash.</summary>
+    public static string SharedBackupPrefix(string localBackupDir, string playerName)
+    {
+        var player = string.Concat(playerName.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '-' : c)).Trim();
+        return $"{Path.GetFileName(localBackupDir)}_{(player == "" ? "unknown" : player)}_";
+    }
+
+    /// <summary>The backups in the shared folder's backups\&lt;world&gt; folder, newest first.</summary>
+    public static List<BackupInfo> ListSharedBackups(string sharedBackupsDir)
+    {
+        var root = new DirectoryInfo(sharedBackupsDir);
+        if (!root.Exists) return [];
+        var result = new List<BackupInfo>();
+        foreach (var file in root.GetFiles("*.zip").OrderByDescending(f => f.Name))
+        {
+            var (created, reason, rest) = ParseBackupName(Path.GetFileNameWithoutExtension(file.Name), file.CreationTime);
+            var split = rest.LastIndexOf('_');
+            var (by, hash) = split > 0 ? (rest[..split], rest[(split + 1)..]) : (rest, "");
+            result.Add(new BackupInfo(file.FullName, created, reason, file.Length, by == "" ? "someone" : by, hash));
+        }
+        return result;
+    }
+
+    /// <summary>Keeps only the newest <paramref name="keep"/> backups in the shared folder.</summary>
+    public static void PruneSharedBackups(string sharedBackupsDir, int keep)
+    {
+        foreach (var old in ListSharedBackups(sharedBackupsDir).Skip(keep))
+            File.Delete(old.Location);
+    }
+
+    private static (DateTime Created, string Reason, string Remainder) ParseBackupName(string name, DateTime fallback)
+    {
+        var parts = name.Split('_', 4);
+        if (parts.Length < 2 || !DateTime.TryParseExact($"{parts[0]}_{parts[1]}", "yyyy-MM-dd_HH-mm-ss",
+                null, System.Globalization.DateTimeStyles.None, out var created))
+            created = fallback;
+        return (created, parts.Length >= 3 ? parts[2].Replace('-', ' ') : "", parts.Length == 4 ? parts[3] : "");
     }
 
     /// <summary>Writes the world's files to a .zip, in the same layout as a worlds folder.</summary>

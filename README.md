@@ -33,10 +33,13 @@ because the app isn't signed: click **More info → Run anyway**.
 
 - Before the app overwrites a world on your PC, it saves a backup. It keeps the last 10 per world in
   `%LOCALAPPDATA%\ValheimWorldSync\Backups` (**Open backups** in the app).
+- Each of those backups is also uploaded as a `.zip` to the `backups\` folder on Google Drive, so the group keeps them
+  even if a PC is lost. Identical backups are stored only once, and the newest 10 are kept. They count towards the
+  Google Drive storage of the player who uploaded them.
 - **Back up…** saves the latest version of the world as a `.zip` wherever you like. These are never cleaned up.
-- **Restore…** makes an earlier version the shared world again: pick one of the automatic backups, or choose a `.zip`
-  backup or a world file (`.fwl` / `.fwl2`). The current version is backed up first, so a restore can be undone. It's
-  uploaded as a new version, and everyone gets it the next time they play.
+- **Restore…** makes an earlier version the shared world again: pick one of the automatic backups (from Google Drive or
+  this PC), or choose a `.zip` backup or a world file (`.fwl` / `.fwl2`). The current version is backed up first, so a
+  restore can be undone. It's uploaded as a new version, and everyone gets it the next time they play.
 - If two people end up hosting at the same time, the second upload is detected and you choose which version to keep.
   The other version is backed up.
 - If a host's PC crashes, the others see "session didn't finish" and are asked to wait. When that host opens the
@@ -52,6 +55,7 @@ The shared folder contains:
 | `state.json`      | Latest version number, who saved it, and a hash of each file |
 | `world\`          | The world files (only changed files are copied)              |
 | `hosts\`          | One small file per PC that is hosting, with a heartbeat every minute |
+| `backups\`        | Everyone's automatic backups as `.zip` files (newest 10)     |
 
 Every PC only writes its own file in `hosts\`, so Google Drive never has to merge edits. A host that hasn't
 written a heartbeat for 4 minutes is treated as gone. Downloads wait until the files on Google Drive match the

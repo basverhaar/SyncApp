@@ -238,17 +238,17 @@ var restored = shared.ReadState()!;
 Check(prompt.Asked.SequenceEqual(["Restore this backup?"]), "restoring asks for confirmation");
 Check(restored.Version == later!.Version + 1 && restored.Hash == backedUp.Hash && restored.UpdatedBy == "Bob", "the .zip is uploaded as a new version");
 Check(await LocalHash(b) == backedUp.Hash, "Bob's local copy is the restored world");
-var replaced = WorldStore.ListBackups(world).FirstOrDefault(x => x.Dir.EndsWith($"shared-v{later.Version}-replaced"));
+var replaced = WorldStore.ListBackups(world).FirstOrDefault(x => x.Location.EndsWith($"shared-v{later.Version}-replaced"));
 Check(replaced != null, "the replaced shared version is backed up");
 
 // 15. Restoring that automatic backup undoes the restore.
 prompt.Answers.Enqueue(0); // Restore
-await b.Engine.RestoreBackupAsync(replaced!.Dir, "the backup");
+await b.Engine.RestoreBackupAsync(replaced!.Location, "the backup");
 Check(shared.ReadState()!.Hash == later.Hash && shared.ReadState()!.Version == restored.Version + 1, "an automatic backup can be restored");
 
 // 16. Restoring the current version, or a different world, changes nothing.
 prompt.Asked.Clear();
-await b.Engine.RestoreBackupAsync(replaced.Dir, "the backup");
+await b.Engine.RestoreBackupAsync(replaced.Location, "the backup");
 Check(prompt.Asked.SequenceEqual(["Nothing to restore"]), "restoring the current version does nothing");
 var otherWorld = Path.Combine(root, "other", "OtherWorld");
 Directory.CreateDirectory(otherWorld);
