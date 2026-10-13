@@ -1,4 +1,5 @@
 using System.IO;
+using System.IO.Compression;
 
 namespace ValheimWorldSync.Core;
 
@@ -602,6 +603,156 @@ public sealed class SyncEngine(AppSettings settings, IUserPrompt prompt)
         settings.LastSyncedHash = state.Hash;
         settings.LastSyncedVersion = state.Version;
         settings.Save();
+    }
+
+    // ───────────────────────────── Backups ─────────────────────────────
+
+    /// <summary>Saves the latest version of the world as a .zip the player keeps wherever they like.</summary>
+    public async Task ExportBackupAsync(string zipPath)
+    {
+        if (IsBusy || InSession) return;
+        SetBusy(true);
+        try
+        {
+            var local = await WorldStore.ScanAsync(LocalDir, World);
+            var localHash = WorldStore.HashOf(local);
+
+            SharedState? state = null;
+            List<WorldFile> remote = [];
+            try
+            {
+                var shared = Shared;
+                state = shared.Exists ? shared.ReadState() : null;
+                if (state != null) remote = await WorldStore.ScanAsync(shared.WorldDir, World);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Log.Info($"Couldn't read the shared folder ({ex.Message}), so the copy on this PC is backed up.");
+            }
+            var remoteReady = state != null && WorldStore.HashOf(remote) == state.Hash;
+
+            List<WorldFile> files;
+            string what;
+            if (remoteReady && localHash != "" && localHash != state!.Hash && localHash != settings.LastSyncedHash)
+            {
+                var choice = await prompt.AskAsync("Which copy?",
+                    $"The copy of \"{World}\" on this PC has progress that isn't in the shared version " +
+                    $"(version {state.Version}, saved by {state.UpdatedBy} {Format.Ago(state.UpdatedAt)}). Which one should be backed up?",
+                    "Shared version", "Copy on this PC", "Cancel");
+                if (choice is < 0 or 2) return;
+                (files, what) = choice == 0 ? (remote, $"version {state.Version}") : (local, "the copy on this PC");
+            }
+            else if (remoteReady)
+                (files, what) = (remote, $"version {state!.Version}");
+            else if (localHash != "")
+                (files, what) = (local, "the copy on this PC");
+            else
+                throw new UserFacingException($"There's no copy of \"{World}\" to back up yet. Press Play once to download it.");
+
+            Log.Info($"Backing up \"{World}\" ({what})…");
+            await WorldStore.ExportZipAsync(files, zipPath);
+            Log.Info($"Backed up {what} to {zipPath} ({Format.Size(new FileInfo(zipPath).Length)}).");
+        }
+        catch (Exception ex)
+        {
+            await ReportAsync(ex);
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+    }
+
+    /// <summary>
+    /// Makes a backup the new shared version of the world. <paramref name="path"/> is an automatic backup folder,
+    /// a .zip made by <see cref="ExportBackupAsync"/>, or a world file (.fwl/.fwl2/.db) from a Valheim worlds folder.
+    /// </summary>
+    public async Task RestoreBackupAsync(string path, string description)
+    {
+        if (IsBusy || InSession) return;
+        SetBusy(true);
+        var staging = Path.Combine(Path.GetTempPath(), "ValheimWorldSync-restore-" + Guid.NewGuid().ToString("N")[..8]);
+        try
+        {
+            await EnsureReadyAsync();
+            if (Valheim.IsRunning)
+                throw new UserFacingException("Close Valheim first, then restore the backup.");
+            if (Hosts.GetActiveOtherHost() is { } host)
+                throw new UserFacingException($"{host.PlayerName} is hosting right now. Restore the backup after they've closed Valheim, " +
+                                              "otherwise their upload would overwrite it.");
+
+            // Copy the backup somewhere safe first: making new backups below can remove old ones.
+            var stagedDir = await StageBackupAsync(path, staging, World);
+            var files = await WorldStore.ScanAsync(stagedDir, World);
+            if (!WorldStore.HasWorldData(files.Select(f => f.ToEntry())))
+                throw new UserFacingException("The backup doesn't contain a complete world (the .fwl file is missing).");
+            var hash = WorldStore.HashOf(files);
+
+            var shared = Shared;
+            var state = shared.ReadState();
+            if (state != null && hash == state.Hash)
+            {
+                await prompt.AskAsync("Nothing to restore", $"This backup is the same as the current shared version (version {state.Version}).", "OK");
+                return;
+            }
+
+            var current = state == null ? "" : $" (version {state.Version}, saved by {state.UpdatedBy} {Format.Ago(state.UpdatedAt)})";
+            var choice = await prompt.AskAsync("Restore this backup?",
+                $"This replaces the shared \"{World}\"{current} with {description}, last saved by Valheim at {Format.Time(LastSaved(files))}. " +
+                "Everyone gets this version the next time they play.\n\n" +
+                "Progress made after the backup is lost, but the current version is backed up first, so you can undo this.",
+                "Restore", "Cancel");
+            if (choice != 0) return;
+
+            var localHash = WorldStore.HashOf(await WorldStore.ScanAsync(LocalDir, World));
+            await WorldStore.BackupAsync(LocalDir, World, "before-restore");
+            if (state != null && localHash != state.Hash)
+                await WorldStore.BackupAsync(shared.WorldDir, World, $"shared-v{state.Version}-replaced");
+
+            Directory.CreateDirectory(LocalDir);
+            await WorldStore.MirrorAsync(files, LocalDir, World);
+            Log.Info($"Restored {description} on this PC.");
+
+            if (await UploadAsync(state?.Version ?? 0) is { } uploaded)
+                Log.Info($"The restored world is now shared as version {uploaded.Version}. Leave your PC on for a minute so Google Drive can finish uploading.");
+        }
+        catch (Exception ex)
+        {
+            await ReportAsync(ex);
+        }
+        finally
+        {
+            TryRun(() => { if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true); });
+            SetBusy(false);
+        }
+    }
+
+    /// <summary>Copies (or extracts) the world from a backup into <paramref name="staging"/>; returns the worlds folder inside it.</summary>
+    private static async Task<string> StageBackupAsync(string path, string staging, string world)
+    {
+        var name = Path.GetFileName(path.TrimEnd('\\'));
+        List<string> others;
+        if (File.Exists(path) && path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+        {
+            try { await Task.Run(() => ZipFile.ExtractToDirectory(path, staging)); }
+            catch (InvalidDataException) { throw new UserFacingException($"{name} isn't a valid .zip file."); }
+            if (WorldStore.FindWorldsDir([staging], world, recursive: true, out others) is { } extracted) return extracted;
+        }
+        else
+        {
+            // A backup folder is searched completely; for a picked world file, look next to it and one folder up
+            // (new-style worlds keep their .fwl2 inside a folder named after the world).
+            var isDir = Directory.Exists(path);
+            string[] candidates = isDir ? [path] : [Path.GetDirectoryName(path)!, Path.GetDirectoryName(Path.GetDirectoryName(path)!) ?? ""];
+            if (WorldStore.FindWorldsDir(candidates.Where(c => c != ""), world, recursive: isDir, out others) is { } source)
+            {
+                await WorldStore.MirrorAsync(await WorldStore.ScanAsync(source, world), staging, world);
+                return staging;
+            }
+        }
+        throw new UserFacingException(others.Count == 0
+            ? $"Couldn't find a Valheim world in {name}."
+            : $"{name} contains {string.Join(", ", others.Select(o => $"\"{o}\""))}, not \"{world}\". Only backups of the shared world can be restored.");
     }
 
     // ───────────────────────────── Setup ─────────────────────────────

@@ -41,6 +41,7 @@ File.WriteAllText(Path.Combine(sampleDir, world, "cacheMinimapMeta"), "cache"); 
 
 // Never look at the real Steam Cloud folders from tests: every simulated PC gets its own.
 Valheim.SteamCloudWorldDirsOverride = [];
+Valheim.IsRunningOverride = false;
 
 var sharedRoot = Path.Combine(root, "shared");
 Directory.CreateDirectory(sharedRoot);
@@ -221,7 +222,43 @@ Check(shared.ReadState()!.Version == bobVersion.Version && shared.ReadState()!.H
 Check(Directory.EnumerateDirectories(Path.Combine(a.DataDir, "Backups", world)).Any(d => d.EndsWith("steam-cloud-session-not-uploaded")),
     "the outdated session is kept as a backup");
 
-Console.WriteLine(failures == 0 ? "\nAll checks passed." : $"\n{failures} check(s) FAILED.");
+// 14. Alice backs up to a .zip and plays on; Bob restores the .zip as a new shared version.
+a.Use();
+var backedUp = shared.ReadState()!;
+var zip = Path.Combine(root, "backup.zip");
+prompt.Asked.Clear();
+await a.Engine.ExportBackupAsync(zip);
+Check(File.Exists(zip) && prompt.Asked.Count == 0, "the world is backed up to a .zip without questions");
+File.AppendAllText(ChunkFile(a), "progress after the backup");
+var later = await a.Engine.UploadAsync(backedUp.Version);
+b.Use();
+prompt.Answers.Enqueue(0); // Restore
+await b.Engine.RestoreBackupAsync(zip, "backup.zip");
+var restored = shared.ReadState()!;
+Check(prompt.Asked.SequenceEqual(["Restore this backup?"]), "restoring asks for confirmation");
+Check(restored.Version == later!.Version + 1 && restored.Hash == backedUp.Hash && restored.UpdatedBy == "Bob", "the .zip is uploaded as a new version");
+Check(await LocalHash(b) == backedUp.Hash, "Bob's local copy is the restored world");
+var replaced = WorldStore.ListBackups(world).FirstOrDefault(x => x.Dir.EndsWith($"shared-v{later.Version}-replaced"));
+Check(replaced != null, "the replaced shared version is backed up");
+
+// 15. Restoring that automatic backup undoes the restore.
+prompt.Answers.Enqueue(0); // Restore
+await b.Engine.RestoreBackupAsync(replaced!.Dir, "the backup");
+Check(shared.ReadState()!.Hash == later.Hash && shared.ReadState()!.Version == restored.Version + 1, "an automatic backup can be restored");
+
+// 16. Restoring the current version, or a different world, changes nothing.
+prompt.Asked.Clear();
+await b.Engine.RestoreBackupAsync(replaced.Dir, "the backup");
+Check(prompt.Asked.SequenceEqual(["Nothing to restore"]), "restoring the current version does nothing");
+var otherWorld = Path.Combine(root, "other", "OtherWorld");
+Directory.CreateDirectory(otherWorld);
+File.WriteAllText(Path.Combine(otherWorld, "_main.1.fwl2"), "other meta");
+var beforeOther = shared.ReadState()!.Version;
+prompt.Asked.Clear();
+await b.Engine.RestoreBackupAsync(Path.Combine(otherWorld, "_main.1.fwl2"), "_main.1.fwl2");
+Check(prompt.Asked.SequenceEqual(["Valheim World Sync"]) && shared.ReadState()!.Version == beforeOther, "a backup of another world is refused");
+
+Console.WriteLine(failures == 0 ?"\nAll checks passed." : $"\n{failures} check(s) FAILED.");
 try { Directory.Delete(root, true); } catch { }
 return failures == 0 ? 0 : 1;
 

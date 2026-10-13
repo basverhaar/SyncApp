@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Shapes;
 using System.Windows.Threading;
+using Microsoft.Win32;
 using ValheimWorldSync.Core;
 
 namespace ValheimWorldSync.Views;
@@ -56,6 +57,7 @@ public partial class DashboardView : UserControl
         WorldSubtitle.Text = $"Playing as {settings.PlayerName}  ·  {settings.SharedFolder}";
         SetupButton.IsEnabled = !engine.IsBusy && !engine.InSession;
         RefreshButton.IsEnabled = !engine.IsBusy;
+        BackupButton.IsEnabled = RestoreButton.IsEnabled = !engine.IsBusy && !engine.InSession;
 
         if (engine.InSession)
         {
@@ -151,6 +153,28 @@ public partial class DashboardView : UserControl
     }
 
     private async void Refresh_Click(object sender, RoutedEventArgs e) => await RefreshAsync();
+
+    private async void Backup_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new SaveFileDialog
+        {
+            Title = "Back up the world",
+            FileName = $"{settings.WorldName} {DateTime.Now:yyyy-MM-dd HH-mm}.zip",
+            DefaultExt = ".zip",
+            Filter = "Zip file (*.zip)|*.zip",
+            InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+        };
+        if (dialog.ShowDialog(Window.GetWindow(this)) != true) return;
+        await engine.ExportBackupAsync(dialog.FileName);
+        await RefreshAsync();
+    }
+
+    private async void Restore_Click(object sender, RoutedEventArgs e)
+    {
+        if (settings.WorldName == null || RestoreDialog.Show(Window.GetWindow(this), settings.WorldName) is not { } choice) return;
+        await engine.RestoreBackupAsync(choice.Path, choice.Description);
+        await RefreshAsync();
+    }
 
     private void Setup_Click(object sender, RoutedEventArgs e) => SettingsRequested?.Invoke();
 

@@ -35,10 +35,14 @@ public static partial class Valheim
         }
     }
 
+    /// <summary>For tests: pretend Valheim is (not) running instead of looking at the real processes.</summary>
+    internal static bool? IsRunningOverride { get; set; }
+
     public static bool IsRunning
     {
         get
         {
+            if (IsRunningOverride is { } overridden) return overridden;
             var processes = Process.GetProcessesByName("valheim");
             foreach (var p in processes) p.Dispose();
             return processes.Length > 0;

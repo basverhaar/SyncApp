@@ -1,4 +1,5 @@
 using System.IO;
+using System.IO.Compression;
 using System.Security.Cryptography;
 
 namespace ValheimWorldSync.Core;
@@ -8,6 +9,9 @@ public sealed record WorldInfo(string Name, string WorldsDir, bool IsSteamCloud,
 {
     public string Location => IsSteamCloud ? "Steam Cloud" : "This PC";
 }
+
+/// <summary>An automatic backup in the app's backups folder.</summary>
+public sealed record BackupInfo(string Dir, DateTime Created, string Reason, long Size);
 
 /// <summary>A world file with its location on disk.</summary>
 public sealed record WorldFile(string Relative, string FullPath, long Size, string Sha256)
@@ -138,6 +142,70 @@ public static class WorldStore
 
             return (string?)target;
         });
+
+    /// <summary>The automatic backups of a world, newest first.</summary>
+    public static List<BackupInfo> ListBackups(string world)
+    {
+        var root = new DirectoryInfo(Path.Combine(AppPaths.BackupsDir, world));
+        if (!root.Exists) return [];
+        var result = new List<BackupInfo>();
+        foreach (var dir in root.GetDirectories().OrderByDescending(d => d.Name))
+        {
+            // Folder names look like 2026-10-13_20-15-00_before-download.
+            var parts = dir.Name.Split('_', 3);
+            if (parts.Length < 2 || !DateTime.TryParseExact($"{parts[0]}_{parts[1]}", "yyyy-MM-dd_HH-mm-ss",
+                    null, System.Globalization.DateTimeStyles.None, out var created))
+                created = dir.CreationTime;
+            var reason = parts.Length == 3 ? parts[2].Replace('-', ' ') : "";
+            var size = EnumerateFiles(dir.FullName, world).Sum(f => new FileInfo(f.FullPath).Length);
+            if (size > 0) result.Add(new BackupInfo(dir.FullName, created, reason, size));
+        }
+        return result;
+    }
+
+    /// <summary>Writes the world's files to a .zip, in the same layout as a worlds folder.</summary>
+    public static Task ExportZipAsync(IReadOnlyList<WorldFile> files, string zipPath, CancellationToken ct = default) =>
+        Task.Run(() =>
+        {
+            var temp = zipPath + ".tmp";
+            using (var zip = ZipFile.Open(temp, ZipArchiveMode.Create))
+            {
+                foreach (var file in files)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var entry = zip.CreateEntry(file.Relative, CompressionLevel.Optimal);
+                    entry.LastWriteTime = File.GetLastWriteTime(file.FullPath);
+                    using var input = new FileStream(file.FullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                    using var output = entry.Open();
+                    input.CopyTo(output);
+                }
+            }
+            File.Move(temp, zipPath, overwrite: true);
+        }, ct);
+
+    /// <summary>
+    /// Finds the worlds folder that contains <paramref name="world"/>: one of <paramref name="candidates"/>,
+    /// or (when <paramref name="recursive"/>) any folder below them. Returns null and the worlds that were found instead.
+    /// </summary>
+    public static string? FindWorldsDir(IEnumerable<string> candidates, string world, bool recursive, out List<string> otherWorlds)
+    {
+        var others = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        otherWorlds = [];
+        foreach (var candidate in candidates.Where(Directory.Exists))
+        {
+            var dirs = recursive
+                ? Directory.EnumerateDirectories(candidate, "*", SearchOption.AllDirectories).Prepend(candidate)
+                : [candidate];
+            foreach (var dir in dirs)
+            {
+                var found = Discover(dir, isSteamCloud: false);
+                if (found.Any(w => w.Name.Equals(world, StringComparison.OrdinalIgnoreCase))) return dir;
+                others.UnionWith(found.Select(w => w.Name));
+            }
+        }
+        otherWorlds = [.. others.Order()];
+        return null;
+    }
 
     /// <summary>True when the world's folder is a symbolic link or junction (e.g. a manual link into Google Drive).</summary>
     public static bool IsLinked(string worldsDir, string world) => IsLink(Path.Combine(worldsDir, world));

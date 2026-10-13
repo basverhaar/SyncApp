@@ -54,6 +54,10 @@
 
         <!-- Footer -->
         <WrapPanel Grid.Row="4" Margin="0,12,0,0">
+            <Button x:Name="BackupButton" Content="Back up…" Padding="14,5" Margin="0,0,8,0" Click="Backup_Click"
+                    ToolTip="Save the latest version of the world as a .zip file" />
+            <Button x:Name="RestoreButton" Content="Restore…" Padding="14,5" Margin="0,0,8,0" Click="Restore_Click"
+                    ToolTip="Make a backup the shared version of the world again" />
             <Button Content="Open shared folder" Padding="14,5" Margin="0,0,8,0" Click="OpenShared_Click" />
             <Button Content="Open backups" Padding="14,5" Margin="0,0,8,0" Click="OpenBackups_Click" />
             <Button x:Name="RefreshButton" Content="Refresh" Padding="14,5" Click="Refresh_Click" />
